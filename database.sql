@@ -1,17 +1,33 @@
 -- SQL Schema for TUCUPETS (Uber for Pets)
 -- Suitable for importing directly into Supabase SQL Editor
 
--- Drop tables if they already exist (caution during clean setups)
-DROP TABLE IF EXISTS messages;
-DROP TABLE IF EXISTS driver_locations;
-DROP TABLE IF EXISTS rides;
-DROP TABLE IF EXISTS pets;
-DROP TABLE IF EXISTS profiles;
-DROP TYPE IF EXISTS user_role;
-DROP TYPE IF EXISTS ride_status;
-DROP TYPE IF EXISTS service_class;
+-- 1. Clean up ALL existing triggers on auth.users to prevent duplicate or legacy trigger failures
+DO $$
+DECLARE
+    t RECORD;
+BEGIN
+    FOR t IN 
+        SELECT trigger_name 
+        FROM information_schema.triggers 
+        WHERE event_object_schema = 'auth' 
+          AND event_object_table = 'users'
+    LOOP
+        EXECUTE 'DROP TRIGGER IF EXISTS ' || quote_ident(t.trigger_name) || ' ON auth.users;';
+    END LOOP;
+END;
+$$;
 
--- 1. Profiles Table
+-- Drop tables if they already exist (caution during clean setups)
+DROP TABLE IF EXISTS messages CASCADE;
+DROP TABLE IF EXISTS driver_locations CASCADE;
+DROP TABLE IF EXISTS rides CASCADE;
+DROP TABLE IF EXISTS pets CASCADE;
+DROP TABLE IF EXISTS profiles CASCADE;
+DROP TYPE IF EXISTS user_role CASCADE;
+DROP TYPE IF EXISTS ride_status CASCADE;
+DROP TYPE IF EXISTS service_class CASCADE;
+
+-- 2. Profiles Table
 CREATE TYPE user_role AS ENUM ('owner', 'driver', 'none');
 
 CREATE TABLE profiles (
@@ -41,12 +57,12 @@ RETURNS trigger AS $$
 DECLARE
   v_name TEXT;
   v_avatar TEXT;
-  v_role user_role;
+  v_role public.user_role;
   v_phone TEXT;
 BEGIN
   v_name := 'TucuUser';
   v_avatar := '🐶';
-  v_role := 'none';
+  v_role := 'none'::public.user_role;
   v_phone := '';
 
   IF new.raw_user_meta_data IS NOT NULL THEN
@@ -59,10 +75,10 @@ BEGIN
     -- Try to cast role if present
     BEGIN
       IF new.raw_user_meta_data->>'role' IS NOT NULL THEN
-        v_role := (new.raw_user_meta_data->>'role')::user_role;
+        v_role := (new.raw_user_meta_data->>'role')::public.user_role;
       END IF;
     EXCEPTION WHEN OTHERS THEN
-      v_role := 'none';
+      v_role := 'none'::public.user_role;
     END;
   END IF;
 
@@ -75,14 +91,14 @@ BEGIN
   
   RETURN new;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
 
--- 2. Pets Table
+-- 3. Pets Table
 CREATE TABLE pets (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   owner_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
@@ -103,7 +119,7 @@ CREATE POLICY "Drivers can view pets in assigned rides."
   ON pets FOR SELECT USING (true); -- Simplified view permission for ease of mock drivers
 
 
--- 3. Rides Table
+-- 4. Rides Table
 CREATE TYPE ride_status AS ENUM ('requested', 'accepted', 'arrived', 'started', 'completed', 'cancelled');
 CREATE TYPE service_class AS ENUM ('standard', 'xl', 'vet');
 
@@ -150,7 +166,7 @@ CREATE POLICY "Anyone can update ride status during travel."
   ON rides FOR UPDATE USING (true);
 
 
--- 4. Messages Table
+-- 5. Messages Table
 CREATE TABLE messages (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   ride_id UUID REFERENCES rides(id) ON DELETE CASCADE NOT NULL,
@@ -169,7 +185,7 @@ CREATE POLICY "Messages can be posted by participants."
   ON messages FOR INSERT WITH CHECK (true);
 
 
--- 5. Driver Locations Table
+-- 6. Driver Locations Table
 CREATE TABLE driver_locations (
   driver_id UUID REFERENCES profiles(id) ON DELETE CASCADE PRIMARY KEY,
   lat NUMERIC(9,6) NOT NULL,
