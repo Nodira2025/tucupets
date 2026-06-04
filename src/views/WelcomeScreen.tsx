@@ -14,11 +14,14 @@ export const WelcomeScreen: React.FC = () => {
     loading,
     signUpWithEmail,
     signInWithEmail,
-    loginWithGoogle
+    loginWithGoogle,
+    isPasswordRecovery,
+    sendPasswordResetEmail,
+    updatePassword
   } = useApp();
 
   // Auth panel states
-  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
+  const [authMode, setAuthMode] = useState<'signin' | 'signup' | 'forgot'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
@@ -26,6 +29,10 @@ export const WelcomeScreen: React.FC = () => {
   const [authLoading, setAuthLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
+
+  // Password recovery states
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
 
   // Onboarding form states (shown if logged in but role is 'none')
   const [fullName, setFullName] = useState(userProfile?.fullName || '');
@@ -66,7 +73,7 @@ export const WelcomeScreen: React.FC = () => {
           }
           setAuthMessage('¡Registro exitoso! Por favor revisá tu casilla de correo para confirmar tu email o ingresá.');
         }
-      } else {
+      } else if (authMode === 'signin') {
         const { error } = await signInWithEmail(email, password);
         if (error) {
           setAuthError(error.message);
@@ -82,9 +89,49 @@ export const WelcomeScreen: React.FC = () => {
             localStorage.removeItem('tucupets_remember_me');
           }
         }
+      } else if (authMode === 'forgot') {
+        const { error } = await sendPasswordResetEmail(email);
+        if (error) {
+          setAuthError(error.message);
+        } else {
+          setAuthMessage('¡Enlace enviado! Por favor revisá tu casilla de correo para restablecer tu contraseña.');
+        }
       }
     } catch (err: any) {
-      setAuthError(err.message || 'Error al autenticar');
+      setAuthError(err.message || 'Error al procesar la solicitud');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleRecoverySubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    setAuthMessage('');
+    
+    if (newPassword.length < 6) {
+      setAuthError('La contraseña debe tener al menos 6 caracteres');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setAuthError('Las contraseñas no coinciden');
+      return;
+    }
+
+    setAuthLoading(true);
+    try {
+      const { error } = await updatePassword(newPassword);
+      if (error) {
+        setAuthError(error.message);
+      } else {
+        setAuthMessage('¡Tu contraseña ha sido restablecida con éxito! Ya puedes ingresar.');
+        setNewPassword('');
+        setConfirmPassword('');
+        // Force logout to reset session so they can login with new pass
+        await resetAll();
+      }
+    } catch (err: any) {
+      setAuthError(err.message || 'Error al actualizar la contraseña');
     } finally {
       setAuthLoading(false);
     }
@@ -132,23 +179,114 @@ export const WelcomeScreen: React.FC = () => {
         <span className="tucuman-tag">📍 San Miguel de Tucumán</span>
       </div>
 
-      {!user ? (
-        /* ================= PHASE 1: LOGIN / SIGNUP SCREEN ================= */
+      {isPasswordRecovery ? (
+        /* ================= PASSWORD RECOVERY SCREEN (PASSED FROM LINK) ================= */
         <div className="registration-card glass animate-slide-up">
-          <div className="auth-toggle-row">
+          <h2 style={{ fontSize: '18px', marginBottom: '8px', textAlign: 'center' }}>Restablecer Contraseña 🔒</h2>
+          <p style={{ fontSize: '12px', color: 'var(--neutral-grey)', textAlign: 'center', marginBottom: '16px' }}>
+            Ingresá tu nueva contraseña para tu cuenta de TucuPets.
+          </p>
+
+          <form onSubmit={handleRecoverySubmit}>
+            {/* New Password field */}
+            <div className="input-group">
+              <label>Nueva Contraseña</label>
+              <div style={{ position: 'relative' }}>
+                <span className="input-icon-field"><Lock size={16} /></span>
+                <input 
+                  type={showPassword ? 'text' : 'password'} 
+                  className="input-field-icon"
+                  style={{ paddingRight: '46px' }}
+                  placeholder="Mínimo 6 caracteres"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  required
+                />
+                <button
+                  type="button"
+                  className="password-toggle-btn"
+                  onClick={() => setShowPassword(!showPassword)}
+                  tabIndex={-1}
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+            </div>
+
+            {/* Confirm New Password field */}
+            <div className="input-group">
+              <label>Confirmar Nueva Contraseña</label>
+              <div style={{ position: 'relative' }}>
+                <span className="input-icon-field"><Lock size={16} /></span>
+                <input 
+                  type={showPassword ? 'text' : 'password'} 
+                  className="input-field-icon"
+                  style={{ paddingRight: '46px' }}
+                  placeholder="Repetir nueva contraseña"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  required
+                />
+              </div>
+            </div>
+
+            {authError && (
+              <div className="auth-alert error">
+                ⚠️ {authError}
+              </div>
+            )}
+
+            {authMessage && (
+              <div className="auth-alert success">
+                📧 {authMessage}
+              </div>
+            )}
+
             <button 
-              className={`auth-toggle-btn ${authMode === 'signin' ? 'active' : ''}`}
-              onClick={() => { setAuthMode('signin'); setAuthError(''); }}
+              type="submit" 
+              className="btn btn-primary" 
+              style={{ width: '100%', marginTop: '10px' }}
+              disabled={authLoading}
             >
-              Iniciar Sesión
+              {authLoading ? 'Guardando...' : 'Guardar Nueva Contraseña 💾'}
             </button>
-            <button 
-              className={`auth-toggle-btn ${authMode === 'signup' ? 'active' : ''}`}
-              onClick={() => { setAuthMode('signup'); setAuthError(''); }}
-            >
-              Registrarse
-            </button>
-          </div>
+          </form>
+
+          <button 
+            type="button"
+            className="reset-btn-link" 
+            onClick={resetAll} 
+            style={{ width: '100%', marginTop: '16px', textAlign: 'center' }}
+          >
+            Cancelar y Volver al Inicio
+          </button>
+        </div>
+      ) : !user ? (
+        /* ================= PHASE 1: LOGIN / SIGNUP / FORGOT SCREEN ================= */
+        <div className="registration-card glass animate-slide-up">
+          {authMode !== 'forgot' ? (
+            <div className="auth-toggle-row">
+              <button 
+                className={`auth-toggle-btn ${authMode === 'signin' ? 'active' : ''}`}
+                onClick={() => { setAuthMode('signin'); setAuthError(''); setAuthMessage(''); }}
+              >
+                Iniciar Sesión
+              </button>
+              <button 
+                className={`auth-toggle-btn ${authMode === 'signup' ? 'active' : ''}`}
+                onClick={() => { setAuthMode('signup'); setAuthError(''); setAuthMessage(''); }}
+              >
+                Registrarse
+              </button>
+            </div>
+          ) : (
+            <div style={{ textAlign: 'center', marginBottom: '8px' }}>
+              <h2 style={{ fontSize: '18px', fontWeight: '700' }}>Recuperar Contraseña 🔑</h2>
+              <p style={{ fontSize: '12px', color: 'var(--neutral-grey)', marginTop: '4px' }}>
+                Te enviaremos un correo para que puedas restablecerla.
+              </p>
+            </div>
+          )}
 
           <form onSubmit={handleAuthSubmit} style={{ marginTop: '16px' }}>
             {/* Email field */}
@@ -167,43 +305,57 @@ export const WelcomeScreen: React.FC = () => {
               </div>
             </div>
 
-            {/* Password field */}
-            <div className="input-group">
-              <label>Contraseña</label>
-              <div style={{ position: 'relative' }}>
-                <span className="input-icon-field"><Lock size={16} /></span>
-                <input 
-                  type={showPassword ? 'text' : 'password'} 
-                  className="input-field-icon"
-                  style={{ paddingRight: '46px' }}
-                  placeholder="Mínimo 6 caracteres"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
-                <button
-                  type="button"
-                  className="password-toggle-btn"
-                  onClick={() => setShowPassword(!showPassword)}
-                  tabIndex={-1}
-                >
-                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                </button>
-              </div>
-            </div>
+            {authMode !== 'forgot' && (
+              <>
+                {/* Password field */}
+                <div className="input-group">
+                  <label>Contraseña</label>
+                  <div style={{ position: 'relative' }}>
+                    <span className="input-icon-field"><Lock size={16} /></span>
+                    <input 
+                      type={showPassword ? 'text' : 'password'} 
+                      className="input-field-icon"
+                      style={{ paddingRight: '46px' }}
+                      placeholder="Mínimo 6 caracteres"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      required
+                    />
+                    <button
+                      type="button"
+                      className="password-toggle-btn"
+                      onClick={() => setShowPassword(!showPassword)}
+                      tabIndex={-1}
+                    >
+                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                </div>
 
-            {/* Remember Me Checkbox */}
-            <div className="remember-me-row">
-              <label className="remember-me-label">
-                <input 
-                  type="checkbox" 
-                  className="remember-me-checkbox"
-                  checked={rememberMe}
-                  onChange={(e) => setRememberMe(e.target.checked)}
-                />
-                <span className="remember-me-text">Recordar contraseña</span>
-              </label>
-            </div>
+                {/* Remember Me Checkbox & Forgot Password Link */}
+                <div className="remember-me-row">
+                  <label className="remember-me-label">
+                    <input 
+                      type="checkbox" 
+                      className="remember-me-checkbox"
+                      checked={rememberMe}
+                      onChange={(e) => setRememberMe(e.target.checked)}
+                    />
+                    <span className="remember-me-text">Recordar contraseña</span>
+                  </label>
+                  
+                  {authMode === 'signin' && (
+                    <button 
+                      type="button" 
+                      className="forgot-pass-link"
+                      onClick={() => { setAuthMode('forgot'); setAuthError(''); setAuthMessage(''); }}
+                    >
+                      ¿La olvidaste?
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
 
             {authError && (
               <div className="auth-alert error">
@@ -220,11 +372,28 @@ export const WelcomeScreen: React.FC = () => {
             <button 
               type="submit" 
               className="btn btn-primary" 
-              style={{ width: '100%', marginTop: '6px' }}
+              style={{ width: '100%', marginTop: authMode === 'forgot' ? '12px' : '6px' }}
               disabled={authLoading}
             >
-              {authLoading ? 'Procesando...' : authMode === 'signin' ? 'Ingresar 🚀' : 'Crear Cuenta 🚀'}
+              {authLoading 
+                ? 'Procesando...' 
+                : authMode === 'signin' 
+                  ? 'Ingresar 🚀' 
+                  : authMode === 'signup' 
+                    ? 'Crear Cuenta 🚀' 
+                    : 'Enviar Enlace 📧'}
             </button>
+
+            {authMode === 'forgot' && (
+              <button 
+                type="button" 
+                className="btn btn-ghost" 
+                style={{ width: '100%', marginTop: '8px', fontSize: '13px', padding: '8px' }}
+                onClick={() => { setAuthMode('signin'); setAuthError(''); setAuthMessage(''); }}
+              >
+                Volver al Login
+              </button>
+            )}
           </form>
 
           {/* Social Sign-in option */}
@@ -557,9 +726,11 @@ export const WelcomeScreen: React.FC = () => {
         .remember-me-row {
           display: flex;
           align-items: center;
+          justify-content: space-between;
           margin-top: 2px;
           margin-bottom: 18px;
           padding-left: 2px;
+          padding-right: 2px;
         }
         .remember-me-label {
           display: flex;
@@ -583,6 +754,19 @@ export const WelcomeScreen: React.FC = () => {
           transition: color 0.2s ease;
         }
         .remember-me-label:hover .remember-me-text {
+          color: var(--neutral-dark);
+        }
+        .forgot-pass-link {
+          background: none;
+          border: none;
+          color: var(--primary-dark);
+          font-size: 13px;
+          font-weight: 700;
+          text-decoration: underline;
+          cursor: pointer;
+          transition: color 0.2s ease;
+        }
+        .forgot-pass-link:hover {
           color: var(--neutral-dark);
         }
         .auth-alert {

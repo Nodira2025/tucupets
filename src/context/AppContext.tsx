@@ -95,6 +95,10 @@ interface AppContextType {
   signInWithEmail: (email: string, pass: string) => Promise<{ error: any }>;
   loginWithGoogle: () => Promise<void>;
   resetAll: () => Promise<void>;
+  isPasswordRecovery: boolean;
+  setIsPasswordRecovery: (val: boolean) => void;
+  sendPasswordResetEmail: (email: string) => Promise<{ error: any }>;
+  updatePassword: (password: string) => Promise<{ error: any }>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -130,6 +134,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
 
   // App domain states
   const [userRole, setUserRole] = useState<'owner' | 'driver' | 'none'>('none');
@@ -169,9 +174,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session);
       setUser(session?.user ?? null);
+      if (event === 'PASSWORD_RECOVERY') {
+        setIsPasswordRecovery(true);
+      }
       if (session?.user) {
         fetchProfile(session.user.id);
       } else {
@@ -768,6 +776,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
+  const sendPasswordResetEmail = async (email: string) => {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin
+    });
+    return { error };
+  };
+
+  const updatePassword = async (newPass: string) => {
+    const { error } = await supabase.auth.updateUser({ password: newPass });
+    if (!error) {
+      setIsPasswordRecovery(false);
+    }
+    return { error };
+  };
+
   const resetAll = async () => {
     if (geoWatcherRef.current !== null) {
       navigator.geolocation.clearWatch(geoWatcherRef.current);
@@ -780,6 +803,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setActiveRide(null);
     setChatMessages([]);
     setDriverOnline(false);
+    setIsPasswordRecovery(false);
   };
 
   return (
@@ -799,6 +823,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       session,
       user,
       loading,
+      isPasswordRecovery,
       
       selectRole,
       registerUser,
@@ -816,6 +841,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       signUpWithEmail,
       signInWithEmail,
       loginWithGoogle,
+      sendPasswordResetEmail,
+      updatePassword,
+      setIsPasswordRecovery,
       resetAll
     }}>
       {children}
