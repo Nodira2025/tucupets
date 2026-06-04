@@ -38,15 +38,41 @@ CREATE POLICY "Users can update their own profile."
 -- Trigger to create a profile automatically when a user signs up (Email or Google)
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS trigger AS $$
+DECLARE
+  v_name TEXT;
+  v_avatar TEXT;
+  v_role user_role;
+  v_phone TEXT;
 BEGIN
+  v_name := 'TucuUser';
+  v_avatar := '🐶';
+  v_role := 'none';
+  v_phone := '';
+
+  IF new.raw_user_meta_data IS NOT NULL THEN
+    IF new.raw_user_meta_data->>'full_name' IS NOT NULL THEN
+      v_name := new.raw_user_meta_data->>'full_name';
+    END IF;
+    IF new.raw_user_meta_data->>'avatar_url' IS NOT NULL THEN
+      v_avatar := new.raw_user_meta_data->>'avatar_url';
+    END IF;
+    -- Try to cast role if present
+    BEGIN
+      IF new.raw_user_meta_data->>'role' IS NOT NULL THEN
+        v_role := (new.raw_user_meta_data->>'role')::user_role;
+      END IF;
+    EXCEPTION WHEN OTHERS THEN
+      v_role := 'none';
+    END;
+  END IF;
+
+  IF new.phone IS NOT NULL THEN
+    v_phone := new.phone;
+  END IF;
+
   INSERT INTO public.profiles (id, full_name, avatar_url, role, phone)
-  VALUES (
-    new.id,
-    COALESCE(new.raw_user_meta_data->>'full_name', 'TucuUser'),
-    new.raw_user_meta_data->>'avatar_url',
-    COALESCE((new.raw_user_meta_data->>'role')::user_role, 'none'),
-    new.phone
-  );
+  VALUES (new.id, v_name, v_avatar, v_role, v_phone);
+  
   RETURN new;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
