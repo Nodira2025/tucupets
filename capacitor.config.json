@@ -1,0 +1,6 @@
+{
+  "appId": "com.tucupets.app",
+  "appName": "TucuPets",
+  "webDir": "dist",
+  "bundledWebRuntime": false
+}
