@@ -1,4 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import { supabase } from '../supabaseClient';
+import type { Session, User } from '@supabase/supabase-js';
 
 export interface Pet {
   id: string;
@@ -62,171 +64,395 @@ interface AppContextType {
   driverLocation: [number, number];
   driverEarnings: number;
   driverRidesCompleted: number;
-  driverWhatsapp: boolean; // WhatsApp perm toggle
-  useRealGPS: boolean; // Bind map to phone GPS
+  driverWhatsapp: boolean;
+  useRealGPS: boolean;
+  session: Session | null;
+  user: User | null;
+  loading: boolean;
+  
   selectRole: (role: 'owner' | 'driver' | 'none') => void;
-  registerUser: (profile: UserProfile) => void;
-  addPet: (pet: Omit<Pet, 'id'>) => void;
-  deletePet: (id: string) => void;
+  registerUser: (profile: UserProfile) => Promise<void>;
+  addPet: (pet: Omit<Pet, 'id'>) => Promise<void>;
+  deletePet: (id: string) => Promise<void>;
   requestRide: (
     petId: string, 
     serviceClass: Ride['serviceClass'], 
     pickupAddr: string, 
     dropoffAddr: string,
     paymentMethod: Ride['paymentMethod']
-  ) => void;
-  cancelRide: () => void;
-  acceptRide: (rideId: string) => void;
-  verifyRidePin: (pin: string) => boolean; // Verification PIN logic
-  advanceRideStatus: () => void;
-  sendChatMessage: (msg: string, sender: 'owner' | 'driver') => void;
+  ) => Promise<void>;
+  cancelRide: () => Promise<void>;
+  acceptRide: (rideId: string) => Promise<void>;
+  verifyRidePin: (pin: string) => Promise<boolean>;
+  advanceRideStatus: () => Promise<void>;
+  sendChatMessage: (msg: string, sender: 'owner' | 'driver') => Promise<void>;
   toggleDriverOnline: () => void;
   toggleDriverWhatsapp: () => void;
   toggleUseRealGPS: () => void;
-  resetAll: () => void;
+  
+  // Auth Triggers
+  signUpWithEmail: (email: string, pass: string) => Promise<{ error: any }>;
+  signInWithEmail: (email: string, pass: string) => Promise<{ error: any }>;
+  loginWithGoogle: () => Promise<void>;
+  resetAll: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-// Base coordinates locked to San Miguel de Tucumán, Argentina (Plaza Independencia)
 const TUCUMAN_COORDS: [number, number] = [-26.8241, -65.2226];
 
-// Preloaded mock pets if empty
-const DEFAULT_PETS: Pet[] = [
-  {
-    id: '1',
-    name: 'Toby',
-    type: 'Perro',
-    size: 'Mediano',
-    specialNotes: 'Le encanta asomarse por la ventana. Muy dócil.',
-    photoUrl: 'https://images.unsplash.com/photo-1543466835-00a7907e9de1?w=150&auto=format&fit=crop&q=80'
-  },
-  {
-    id: '2',
-    name: 'Mimi',
-    type: 'Gato',
-    size: 'Pequeño',
-    specialNotes: 'Viaja únicamente dentro de su transportadora. Algo asustadiza.',
-    photoUrl: 'https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?w=150&auto=format&fit=crop&q=80'
-  }
-];
+const mapDbRideToModel = (r: any): Ride => ({
+  id: r.id,
+  ownerId: r.owner_id,
+  ownerName: r.owner_name,
+  ownerPhone: r.owner_phone,
+  driverId: r.driver_id,
+  driverName: r.driver_name,
+  driverPhone: r.driver_phone,
+  vehicleInfo: r.vehicle_info,
+  petId: r.pet_id,
+  petName: r.pet_name,
+  status: r.status,
+  serviceClass: r.service_class,
+  pickupAddress: r.pickup_address,
+  pickupCoords: [Number(r.pickup_lat), Number(r.pickup_lng)],
+  dropoffAddress: r.dropoff_address,
+  dropoffCoords: [Number(r.dropoff_lat), Number(r.dropoff_lng)],
+  price: Number(r.price),
+  eta: r.eta,
+  createdAt: r.created_at,
+  pinCode: r.pin_code,
+  paymentMethod: r.payment_method as any
+});
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [userRole, setUserRole] = useState<'owner' | 'driver' | 'none'>(() => {
-    return (localStorage.getItem('tucupets_role') as any) || 'none';
-  });
+  // Auth state
+  const [session, setSession] = useState<Session | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(() => {
-    const saved = localStorage.getItem('tucupets_profile');
-    return saved ? JSON.parse(saved) : null;
-  });
+  // App domain states
+  const [userRole, setUserRole] = useState<'owner' | 'driver' | 'none'>('none');
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [pets, setPets] = useState<Pet[]>([]);
+  const [rides, setRides] = useState<Ride[]>([]);
+  const [activeRide, setActiveRide] = useState<Ride | null>(null);
+  const [chatMessages, setChatMessages] = useState<Message[]>([]);
+
+  // Driver metrics
+  const [driverOnline, setDriverOnline] = useState(false);
+  const [driverLocation, setDriverLocation] = useState<[number, number]>(TUCUMAN_COORDS);
+  const [driverEarnings, setDriverEarnings] = useState(0);
+  const [driverRidesCompleted, setDriverRidesCompleted] = useState(0);
   
-  const [pets, setPets] = useState<Pet[]>(() => {
-    const saved = localStorage.getItem('tucupets_pets');
-    return saved ? JSON.parse(saved) : DEFAULT_PETS;
-  });
+  // Custom toggles
+  const [driverWhatsapp, setDriverWhatsapp] = useState(true);
+  const [useRealGPS, setUseRealGPS] = useState(false);
 
-  const [rides, setRides] = useState<Ride[]>(() => {
-    const saved = localStorage.getItem('tucupets_rides');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [activeRide, setActiveRide] = useState<Ride | null>(() => {
-    const saved = localStorage.getItem('tucupets_active_ride');
-    return saved ? JSON.parse(saved) : null;
-  });
-
-  const [chatMessages, setChatMessages] = useState<Message[]>(() => {
-    const saved = localStorage.getItem('tucupets_chat');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  // Driver metrics state
-  const [driverOnline, setDriverOnline] = useState<boolean>(() => {
-    return localStorage.getItem('tucupets_dr_online') === 'true';
-  });
-  const [driverLocation, setDriverLocation] = useState<[number, number]>(() => {
-    const saved = localStorage.getItem('tucupets_dr_loc');
-    return saved ? JSON.parse(saved) : [TUCUMAN_COORDS[0] + 0.003, TUCUMAN_COORDS[1] + 0.007];
-  });
-  const [driverEarnings, setDriverEarnings] = useState<number>(() => {
-    return Number(localStorage.getItem('tucupets_dr_earnings') || '0');
-  });
-  const [driverRidesCompleted, setDriverRidesCompleted] = useState<number>(() => {
-    return Number(localStorage.getItem('tucupets_dr_rides_count') || '0');
-  });
-
-  // Local Argentine WhatsApp & GPS options
-  const [driverWhatsapp, setDriverWhatsapp] = useState<boolean>(() => {
-    return localStorage.getItem('tucupets_dr_wa') !== 'false';
-  });
-  const [useRealGPS, setUseRealGPS] = useState<boolean>(() => {
-    return localStorage.getItem('tucupets_dr_real_gps') === 'true';
-  });
-
-  // Keep references for animation loops & Geolocation watcher
-  const animationRef = useRef<number | null>(null);
+  // Ref channels for unsubscribing
+  const rideChannelRef = useRef<any>(null);
+  const chatChannelRef = useRef<any>(null);
+  const locChannelRef = useRef<any>(null);
+  const reqChannelRef = useRef<any>(null);
+  
   const geoWatcherRef = useRef<number | null>(null);
 
-  // Sync state with localstorage
+  // 1. Hook: Handle Supabase Auth Initialization
   useEffect(() => {
-    localStorage.setItem('tucupets_role', userRole);
-  }, [userRole]);
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setUser(session?.user ?? null);
+      if (session?.user) {
+        fetchProfile(session.user.id);
+      } else {
+        setLoading(false);
+      }
+    });
 
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      setUser(session?.user ?? null);
+      if (session?.user) {
+        fetchProfile(session.user.id);
+      } else {
+        setUserProfile(null);
+        setUserRole('none');
+        setLoading(false);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // 2. Fetch User Profile
+  const fetchProfile = async (userId: string) => {
+    try {
+      const { data } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .single();
+      
+      if (data) {
+        setUserProfile({
+          fullName: data.full_name || '',
+          phone: data.phone || '',
+          role: data.role || 'none',
+          vehicleInfo: data.vehicle_info || '',
+          avatar: data.avatar_url || '🐶'
+        });
+        setUserRole(data.role);
+        setDriverOnline(data.is_online);
+      }
+    } catch (e) {
+      console.error("Profile load error:", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 3. Load user pets and ride history upon profile initialization
   useEffect(() => {
-    localStorage.setItem('tucupets_profile', userProfile ? JSON.stringify(userProfile) : '');
-  }, [userProfile]);
+    if (!user) return;
+    fetchPets();
+    fetchRidesHistory();
+    fetchActiveRide();
+  }, [user, userRole]);
 
+  const fetchPets = async () => {
+    if (!user) return;
+    const { data } = await supabase
+      .from('pets')
+      .select('*')
+      .eq('owner_id', user.id);
+    if (data) {
+      setPets(data.map(p => ({
+        id: p.id,
+        name: p.name,
+        type: p.type,
+        size: p.size,
+        specialNotes: p.special_notes,
+        photoUrl: p.photo_url || 'https://images.unsplash.com/photo-1543466835-00a7907e9de1?w=150&auto=format&fit=crop&q=80'
+      })));
+    }
+  };
+
+  const fetchRidesHistory = async () => {
+    if (!user) return;
+    const { data } = await supabase
+      .from('rides')
+      .select('*')
+      .or(`owner_id.eq.${user.id},driver_id.eq.${user.id}`)
+      .eq('status', 'completed')
+      .order('created_at', { ascending: false });
+    
+    if (data) {
+      setRides(data.map(mapDbRideToModel));
+      // Calculate earnings if driver
+      if (userRole === 'driver') {
+        const sum = data.reduce((acc, curr) => acc + Number(curr.price), 0);
+        setDriverEarnings(sum);
+        setDriverRidesCompleted(data.length);
+      }
+    }
+  };
+
+  // Find if there's any active ride in progress
+  const fetchActiveRide = async () => {
+    if (!user) return;
+    const { data } = await supabase
+      .from('rides')
+      .select('*')
+      .or(`owner_id.eq.${user.id},driver_id.eq.${user.id}`)
+      .not('status', 'in', '("completed","cancelled")')
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (data && data.length > 0) {
+      const active = mapDbRideToModel(data[0]);
+      setActiveRide(active);
+      setupRideSubscriptions(active.id, active.driverId);
+    }
+  };
+
+  // 4. Setup Database Real-Time listeners
+  const setupRideSubscriptions = (rideId: string, driverId?: string) => {
+    // Unsubscribe previous
+    if (rideChannelRef.current) rideChannelRef.current.unsubscribe();
+    if (chatChannelRef.current) chatChannelRef.current.unsubscribe();
+    if (locChannelRef.current) locChannelRef.current.unsubscribe();
+
+    // Subscribe to ride edits
+    rideChannelRef.current = supabase
+      .channel(`ride-view-${rideId}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'rides', filter: `id=eq.${rideId}` },
+        (payload) => {
+          const updated = mapDbRideToModel(payload.new);
+          setActiveRide(updated);
+          
+          if (updated.status === 'completed' || updated.status === 'cancelled') {
+            setRides(all => [updated, ...all]);
+            setActiveRide(null);
+            setChatMessages([]);
+            
+            if (rideChannelRef.current) rideChannelRef.current.unsubscribe();
+            if (chatChannelRef.current) chatChannelRef.current.unsubscribe();
+            if (locChannelRef.current) locChannelRef.current.unsubscribe();
+          }
+        }
+      )
+      .subscribe();
+
+    // Subscribe to messages in this ride
+    chatChannelRef.current = supabase
+      .channel(`chat-view-${rideId}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'messages', filter: `ride_id=eq.${rideId}` },
+        (payload) => {
+          const m = payload.new;
+          setChatMessages(prev => {
+            if (prev.some(x => x.id === m.id)) return prev;
+            return [...prev, {
+              id: m.id,
+              rideId: m.ride_id,
+              senderId: m.sender_id as any,
+              senderName: m.sender_name,
+              message: m.message,
+              createdAt: m.created_at
+            }];
+          });
+        }
+      )
+      .subscribe();
+
+    // Load initial chat history
+    supabase
+      .from('messages')
+      .select('*')
+      .eq('ride_id', rideId)
+      .order('created_at', { ascending: true })
+      .then(({ data }) => {
+        if (data) {
+          setChatMessages(data.map(m => ({
+            id: m.id,
+            rideId: m.ride_id,
+            senderId: m.sender_id as any,
+            senderName: m.sender_name,
+            message: m.message,
+            createdAt: m.created_at
+          })));
+        }
+      });
+
+    // Subscribe to driver location coordinates
+    if (driverId && userRole === 'owner') {
+      locChannelRef.current = supabase
+        .channel(`driver-loc-${driverId}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'driver_locations', filter: `driver_id=eq.${driverId}` },
+          (payload) => {
+            if (payload.new) {
+              const pNew = payload.new as any;
+              setDriverLocation([Number(pNew.lat), Number(pNew.lng)]);
+            }
+          }
+        )
+        .subscribe();
+
+      // Load initial coordinates
+      supabase
+        .from('driver_locations')
+        .select('*')
+        .eq('driver_id', driverId)
+        .single()
+        .then(({ data }) => {
+          if (data) {
+            setDriverLocation([Number(data.lat), Number(data.lng)]);
+          }
+        });
+    }
+  };
+
+  // Driver listen to requested rides in real-time
   useEffect(() => {
-    localStorage.setItem('tucupets_pets', JSON.stringify(pets));
-  }, [pets]);
+    if (userRole !== 'driver' || !driverOnline) {
+      if (reqChannelRef.current) reqChannelRef.current.unsubscribe();
+      return;
+    }
 
-  useEffect(() => {
-    localStorage.setItem('tucupets_rides', JSON.stringify(rides));
-  }, [rides]);
+    // Load existing pending requests
+    supabase
+      .from('rides')
+      .select('*')
+      .eq('status', 'requested')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .then(({ data }) => {
+        if (data && data.length > 0 && !activeRide) {
+          setActiveRide(mapDbRideToModel(data[0]));
+        }
+      });
 
-  useEffect(() => {
-    localStorage.setItem('tucupets_active_ride', activeRide ? JSON.stringify(activeRide) : '');
-  }, [activeRide]);
+    // Real-time requested rides channel
+    reqChannelRef.current = supabase
+      .channel('driver-requests')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'rides', filter: 'status=eq.requested' },
+        (payload) => {
+          if (!activeRide) {
+            setActiveRide(mapDbRideToModel(payload.new));
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'rides' },
+        (payload) => {
+          const r = payload.new;
+          // Clear active request if accepted by someone else
+          if (r.status !== 'requested') {
+            setActiveRide(prev => prev && prev.id === r.id ? null : prev);
+          }
+        }
+      )
+      .subscribe();
 
-  useEffect(() => {
-    localStorage.setItem('tucupets_chat', JSON.stringify(chatMessages));
-  }, [chatMessages]);
+    return () => {
+      if (reqChannelRef.current) reqChannelRef.current.unsubscribe();
+    };
+  }, [userRole, driverOnline, activeRide]);
 
-  useEffect(() => {
-    localStorage.setItem('tucupets_dr_online', String(driverOnline));
-  }, [driverOnline]);
-
-  useEffect(() => {
-    localStorage.setItem('tucupets_dr_loc', JSON.stringify(driverLocation));
-  }, [driverLocation]);
-
-  useEffect(() => {
-    localStorage.setItem('tucupets_dr_earnings', String(driverEarnings));
-    localStorage.setItem('tucupets_dr_rides_count', String(driverRidesCompleted));
-  }, [driverEarnings, driverRidesCompleted]);
-
-  useEffect(() => {
-    localStorage.setItem('tucupets_dr_wa', String(driverWhatsapp));
-  }, [driverWhatsapp]);
-
-  useEffect(() => {
-    localStorage.setItem('tucupets_dr_real_gps', String(useRealGPS));
-  }, [useRealGPS]);
-
-  // Geolocation watch listener for real GPS tracking
+  // Geolocation trigger watch loop for driver Location Updates
   useEffect(() => {
     if (useRealGPS && driverOnline && navigator.geolocation) {
       geoWatcherRef.current = navigator.geolocation.watchPosition(
         (position) => {
-          setDriverLocation([position.coords.latitude, position.coords.longitude]);
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+          setDriverLocation([lat, lng]);
+          
+          // Write directly to DB
+          supabase
+            .from('driver_locations')
+            .upsert({
+              driver_id: user?.id,
+              lat,
+              lng,
+              updated_at: new Date().toISOString()
+            })
+            .then();
         },
         (error) => {
-          console.error("GPS Tracking error:", error);
-          alert("Error al obtener señal de GPS. Usando simulación local.");
+          console.error("GPS Watch Position error:", error);
+          alert("Error de GPS. Usando ubicación simulada local.");
           setUseRealGPS(false);
         },
-        { enableHighAccuracy: true, maximumAge: 10000, timeout: 5000 }
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
       );
     }
 
@@ -236,336 +462,282 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         geoWatcherRef.current = null;
       }
     };
-  }, [useRealGPS, driverOnline]);
+  }, [useRealGPS, driverOnline, user]);
 
-  // Simulated driver tracking movement
+  // Simulated location progression (if NOT using real GPS)
   useEffect(() => {
-    if (!activeRide) {
-      if (animationRef.current) clearInterval(animationRef.current);
-      return;
-    }
+    if (!activeRide || useRealGPS) return;
 
     const { status, pickupCoords, dropoffCoords } = activeRide;
 
-    // Do NOT run simulated route updates if the driver is using real device GPS
-    if (useRealGPS && userRole === 'driver') {
-      return;
-    }
-
-    // Trigger auto-simulation for Owner mode only so the user sees action
-    if (userRole === 'owner') {
-      if (status === 'requested') {
-        // Auto-accept after 5 seconds
-        const timer = setTimeout(() => {
-          const updated: Ride = {
-            ...activeRide,
-            status: 'accepted',
-            driverId: 'd100',
-            driverName: 'Marcos Pérez',
-            driverRating: 4.95,
-            driverPhone: '+5493815551234', // Tucumán number
-            vehicleInfo: 'Kangoo Blanca (Habilitada Mascotas)',
-            eta: 3
-          };
-          setActiveRide(updated);
-          setChatMessages([
-            {
-              id: 'm-welcome',
-              rideId: updated.id,
-              senderId: 'driver',
-              senderName: 'Marcos Pérez',
-              message: '¡Hola! Ya voy en camino a buscar a ' + updated.petName + '. Llevo arnés de seguridad.',
-              createdAt: new Date().toISOString()
-            }
-          ]);
-        }, 5000);
-        return () => clearTimeout(timer);
-      }
-    }
-
-    // Coordinates movement simulation for driver tracking
-    if (status === 'accepted' || status === 'started') {
+    if (userRole === 'driver' && (status === 'accepted' || status === 'started')) {
       const targetCoords = status === 'accepted' ? pickupCoords : dropoffCoords;
-      
       const interval = setInterval(() => {
         setDriverLocation(current => {
           const latDiff = targetCoords[0] - current[0];
           const lngDiff = targetCoords[1] - current[1];
           const distance = Math.sqrt(latDiff * latDiff + lngDiff * lngDiff);
-
-          // Step size
-          const step = 0.00035; 
+          const step = 0.00035;
 
           if (distance <= step) {
             clearInterval(interval);
-            
-            // Auto progress status in Owner mode
-            if (userRole === 'owner') {
-              setTimeout(() => {
-                setActiveRide(prev => {
-                  if (!prev) return null;
-                  if (prev.status === 'accepted') {
-                    // Send chat message and update status to arrived
-                    setChatMessages(msgs => [
-                      ...msgs,
-                      {
-                        id: 'm-arrived-' + Date.now(),
-                        rideId: prev.id,
-                        senderId: 'driver',
-                        senderName: prev.driverName || 'Conductor',
-                        message: '¡He llegado a la puerta! Recordá tener a mano el PIN de viaje: ' + prev.pinCode,
-                        createdAt: new Date().toISOString()
-                      }
-                    ]);
-                    
-                    // Auto-start after 5 seconds (simulates giving PIN code)
-                    setTimeout(() => {
-                      setActiveRide(cur => cur ? { ...cur, status: 'started', eta: 6 } : null);
-                    }, 5000);
-
-                    return { ...prev, status: 'arrived', eta: 0 };
-                  } else if (prev.status === 'started') {
-                    // Complete ride
-                    const completedRide: Ride = { ...prev, status: 'completed', eta: 0 };
-                    setRides(all => [completedRide, ...all]);
-                    return completedRide;
-                  }
-                  return prev;
-                });
-              }, 1500);
-            }
             return targetCoords;
           }
 
-          // Move closer to target
-          return [
+          const next: [number, number] = [
             current[0] + (latDiff / distance) * step,
             current[1] + (lngDiff / distance) * step
           ];
-        });
-      }, 1000);
 
-      animationRef.current = interval as any;
+          // Push new coordinates to Database
+          supabase
+            .from('driver_locations')
+            .upsert({
+              driver_id: user?.id,
+              lat: next[0],
+              lng: next[1],
+              updated_at: new Date().toISOString()
+            })
+            .then();
+
+          return next;
+        });
+      }, 2000);
+
       return () => clearInterval(interval);
     }
-  }, [activeRide, userRole, useRealGPS]);
+  }, [activeRide, userRole, useRealGPS, user]);
 
-  // Actions
-  const selectRole = (role: 'owner' | 'driver' | 'none') => {
+  // 5. Actions / DB Integrations
+  const selectRole = async (role: 'owner' | 'driver' | 'none') => {
     setUserRole(role);
-    if (userProfile) {
-      setUserProfile(prev => prev ? { ...prev, role } : null);
+    if (user) {
+      await supabase.from('profiles').update({ role }).eq('id', user.id);
     }
   };
 
-  const registerUser = (profile: UserProfile) => {
-    setUserProfile(profile);
-    setUserRole(profile.role);
+  const registerUser = async (profile: UserProfile) => {
+    if (!user) return;
+    
+    const { error } = await supabase
+      .from('profiles')
+      .upsert({
+        id: user.id,
+        full_name: profile.fullName,
+        phone: profile.phone,
+        role: profile.role,
+        vehicle_info: profile.role === 'driver' ? profile.vehicleInfo : null,
+        avatar_url: profile.avatar,
+        updated_at: new Date().toISOString()
+      });
+
+    if (!error) {
+      setUserProfile(profile);
+      setUserRole(profile.role);
+    } else {
+      alert("Error al registrar: " + error.message);
+    }
   };
 
-  const addPet = (newPet: Omit<Pet, 'id'>) => {
-    const pet: Pet = {
-      ...newPet,
-      id: 'pet-' + Date.now()
-    };
-    setPets(prev => [...prev, pet]);
+  const addPet = async (newPet: Omit<Pet, 'id'>) => {
+    if (!user) return;
+    const { data } = await supabase
+      .from('pets')
+      .insert({
+        owner_id: user.id,
+        name: newPet.name,
+        type: newPet.type,
+        size: newPet.size,
+        special_notes: newPet.specialNotes,
+        photo_url: newPet.photoUrl
+      })
+      .select()
+      .single();
+    
+    if (data) {
+      setPets(prev => [...prev, {
+        id: data.id,
+        name: data.name,
+        type: data.type,
+        size: data.size,
+        specialNotes: data.special_notes,
+        photoUrl: data.photo_url
+      }]);
+    }
   };
 
-  const deletePet = (id: string) => {
+  const deletePet = async (id: string) => {
+    await supabase.from('pets').delete().eq('id', id);
     setPets(prev => prev.filter(p => p.id !== id));
   };
 
-  const requestRide = (
+  const requestRide = async (
     petId: string, 
     serviceClass: Ride['serviceClass'], 
     pickupAddr: string, 
     dropoffAddr: string,
     paymentMethod: Ride['paymentMethod']
   ) => {
+    if (!user) return;
     const petName = pets.find(p => p.id === petId)?.name || 'Mascota';
     
-    // Create random coords centered around Plaza Independencia, Tucumán
+    // Generate random coordinates in Tucumán
     const pLat = TUCUMAN_COORDS[0] + (Math.random() - 0.5) * 0.012;
     const pLng = TUCUMAN_COORDS[1] + (Math.random() - 0.5) * 0.012;
     const dLat = TUCUMAN_COORDS[0] + (Math.random() - 0.5) * 0.012;
     const dLng = TUCUMAN_COORDS[1] + (Math.random() - 0.5) * 0.012;
 
-    // Price calculation
-    let basePrice = 1100;
-    if (serviceClass === 'xl') basePrice = 1800;
-    if (serviceClass === 'vet') basePrice = 2200;
-    const distanceEst = Math.sqrt(Math.pow(pLat - dLat, 2) + Math.pow(pLng - dLng, 2)) * 100;
-    const finalPrice = Math.round(basePrice + distanceEst * 200);
+    const basePrice = serviceClass === 'standard' ? 1100 : serviceClass === 'xl' ? 1800 : 2200;
+    const dist = Math.sqrt(Math.pow(pLat - dLat, 2) + Math.pow(pLng - dLng, 2)) * 100;
+    const price = Math.round(basePrice + dist * 200);
 
-    // Generate random 4-digit safety PIN
-    const generatedPin = Math.floor(1000 + Math.random() * 9000).toString();
+    const pin = Math.floor(1000 + Math.random() * 9000).toString();
 
-    const newRide: Ride = {
-      id: 'ride-' + Date.now(),
-      ownerId: 'owner-current',
-      ownerName: userProfile?.fullName || 'Cliente TucuPets',
-      ownerPhone: userProfile?.phone || '+54 381 000-0000',
-      petId,
-      petName,
-      status: 'requested',
-      serviceClass,
-      pickupAddress: pickupAddr || 'Plaza Independencia',
-      pickupCoords: [pLat, pLng],
-      dropoffAddress: dropoffAddr || 'Hospital Veterinario Tucumán',
-      dropoffCoords: [dLat, dLng],
-      price: finalPrice,
-      eta: Math.round(3 + distanceEst * 8),
-      createdAt: new Date().toISOString(),
-      pinCode: generatedPin,
-      paymentMethod
-    };
+    const { data, error } = await supabase
+      .from('rides')
+      .insert({
+        owner_id: user.id,
+        owner_name: userProfile?.fullName || 'Pasajero',
+        owner_phone: userProfile?.phone || '',
+        pet_id: petId,
+        pet_name: petName,
+        status: 'requested',
+        service_class: serviceClass,
+        pickup_address: pickupAddr,
+        pickup_lat: pLat,
+        pickup_lng: pLng,
+        dropoff_address: dropoffAddr,
+        dropoff_lat: dLat,
+        dropoff_lng: dLng,
+        price,
+        eta: Math.round(3 + dist * 8),
+        pin_code: pin,
+        payment_method: paymentMethod
+      })
+      .select()
+      .single();
 
-    if (!useRealGPS) {
-      setDriverLocation([
-        pLat + (Math.random() > 0.5 ? 0.005 : -0.005),
-        pLng + (Math.random() > 0.5 ? 0.005 : -0.005)
-      ]);
-    }
-
-    setActiveRide(newRide);
-    setChatMessages([]);
-  };
-
-  const cancelRide = () => {
-    if (activeRide) {
-      const cancelled: Ride = { ...activeRide, status: 'cancelled' };
-      setRides(prev => [cancelled, ...prev]);
-      setActiveRide(null);
-      setChatMessages([]);
+    if (data) {
+      const active = mapDbRideToModel(data);
+      setActiveRide(active);
+      setupRideSubscriptions(active.id);
+    } else {
+      console.error(error);
     }
   };
 
-  const acceptRide = (rideId: string) => {
-    if (activeRide && activeRide.id === rideId) {
-      const updated: Ride = {
-        ...activeRide,
+  const cancelRide = async () => {
+    if (!activeRide) return;
+    await supabase.from('rides').update({ status: 'cancelled' }).eq('id', activeRide.id);
+    setActiveRide(null);
+  };
+
+  const acceptRide = async (rideId: string) => {
+    if (!user || !userProfile) return;
+    
+    // Position driver near pickup location
+    const { data: rideData } = await supabase.from('rides').select('pickup_lat, pickup_lng').eq('id', rideId).single();
+    if (rideData) {
+      const startLat = Number(rideData.pickup_lat) + 0.004;
+      const startLng = Number(rideData.pickup_lng) - 0.004;
+      setDriverLocation([startLat, startLng]);
+      await supabase.from('driver_locations').upsert({ driver_id: user.id, lat: startLat, lng: startLng });
+    }
+
+    const { data } = await supabase
+      .from('rides')
+      .update({
         status: 'accepted',
-        driverId: 'driver-current',
-        driverName: userProfile?.fullName || 'Franco Conductor',
-        driverRating: 5.0,
-        driverPhone: userProfile?.phone || '+543816667777',
-        vehicleInfo: userProfile?.vehicleInfo || 'Pet-Fiorino Habilitada (Tucumán)',
+        driver_id: user.id,
+        driver_name: userProfile.fullName,
+        driver_phone: userProfile.phone,
+        vehicle_info: userProfile.vehicleInfo,
         eta: 4
-      };
+      })
+      .eq('id', rideId)
+      .select()
+      .single();
+
+    if (data) {
+      const updated = mapDbRideToModel(data);
       setActiveRide(updated);
-      setChatMessages([
-        {
-          id: 'm-welcome-dr',
-          rideId: updated.id,
-          senderId: 'driver',
-          senderName: updated.driverName || 'Franco Conductor',
-          message: '¡Hola! Acepté el viaje para transportar a ' + updated.petName + '. Voy para allá. Al subir, por favor indicame el PIN de viaje.',
-          createdAt: new Date().toISOString()
-        }
-      ]);
+      setupRideSubscriptions(updated.id, updated.driverId);
+      
+      // Post automatic welcome chat message
+      await supabase.from('messages').insert({
+        ride_id: updated.id,
+        sender_id: 'driver',
+        sender_name: userProfile.fullName,
+        message: '¡Hola! Acepté el viaje para tu mascota. Ya voy en camino. Indicame el PIN al subir.'
+      });
     }
   };
 
-  // Verification PIN logic
-  const verifyRidePin = (pin: string): boolean => {
+  const verifyRidePin = async (pin: string): Promise<boolean> => {
     if (!activeRide) return false;
     
     if (activeRide.pinCode === pin) {
-      const updated: Ride = { ...activeRide, status: 'started', eta: 7 };
-      setActiveRide(updated);
-      setChatMessages(prev => [
-        ...prev,
-        {
-          id: 'sys-pin-' + Date.now(),
-          rideId: activeRide.id,
-          senderId: 'driver',
-          senderName: activeRide.driverName || 'Franco Conductor',
-          message: '¡Código PIN validado con éxito! Viaje iniciado de forma segura.',
-          createdAt: new Date().toISOString()
-        }
-      ]);
-      return true;
+      const { data } = await supabase
+        .from('rides')
+        .update({ status: 'started', eta: 6 })
+        .eq('id', activeRide.id)
+        .select()
+        .single();
+      
+      if (data) {
+        setActiveRide(mapDbRideToModel(data));
+        await supabase.from('messages').insert({
+          ride_id: activeRide.id,
+          sender_id: 'driver',
+          sender_name: activeRide.driverName || 'Chofer',
+          message: '¡PIN Validado! Viaje iniciado de forma segura.'
+        });
+        return true;
+      }
     }
     return false;
   };
 
-  // Manual status advancement for Driver Dashboard
-  const advanceRideStatus = () => {
+  const advanceRideStatus = async () => {
     if (!activeRide) return;
     
-    let nextStatus: Ride['status'] = activeRide.status;
-    let systemMsg = '';
-
     if (activeRide.status === 'accepted') {
-      nextStatus = 'arrived';
-      systemMsg = 'El chofer llegó al origen. Solicitando PIN de seguridad...';
+      const { data } = await supabase.from('rides').update({ status: 'arrived', eta: 0 }).eq('id', activeRide.id).select().single();
+      if (data) {
+        setActiveRide(mapDbRideToModel(data));
+        await supabase.from('messages').insert({
+          ride_id: activeRide.id,
+          sender_id: 'driver',
+          sender_name: activeRide.driverName || 'Chofer',
+          message: '¡He llegado a la puerta del domicilio! Estoy afuera.'
+        });
+      }
     } else if (activeRide.status === 'started') {
-      nextStatus = 'completed';
-      
-      // Update earnings
-      setDriverEarnings(prev => prev + activeRide.price);
-      setDriverRidesCompleted(prev => prev + 1);
-
-      // Save to ride list
-      const completed: Ride = { ...activeRide, status: 'completed' };
-      setRides(prev => [completed, ...prev]);
-      setActiveRide(null);
-      setChatMessages([]);
-      return;
-    }
-
-    const updated = { ...activeRide, status: nextStatus };
-    setActiveRide(updated);
-
-    if (systemMsg) {
-      setChatMessages(prev => [
-        ...prev,
-        {
-          id: 'sys-' + Date.now(),
-          rideId: activeRide.id,
-          senderId: 'driver',
-          senderName: activeRide.driverName || 'Franco Conductor',
-          message: systemMsg,
-          createdAt: new Date().toISOString()
-        }
-      ]);
+      const { data } = await supabase.from('rides').update({ status: 'completed', eta: 0 }).eq('id', activeRide.id).select().single();
+      if (data) {
+        const completed = mapDbRideToModel(data);
+        setRides(all => [completed, ...all]);
+        setActiveRide(null);
+        setChatMessages([]);
+      }
     }
   };
 
-  const sendChatMessage = (msg: string, sender: 'owner' | 'driver') => {
-    if (!activeRide) return;
-
-    const newMessage: Message = {
-      id: 'msg-' + Date.now(),
-      rideId: activeRide.id,
-      senderId: sender,
-      senderName: sender === 'owner' ? (userProfile?.fullName || 'Propietario') : (activeRide.driverName || 'Conductor'),
-      message: msg,
-      createdAt: new Date().toISOString()
-    };
-    
-    setChatMessages(prev => [...prev, newMessage]);
-
-    // Simple auto-reply from AI driver if owner speaks
-    if (sender === 'owner' && userRole === 'owner') {
-      setTimeout(() => {
-        setChatMessages(prev => [
-          ...prev,
-          {
-            id: 'msg-reply-' + Date.now(),
-            rideId: activeRide.id,
-            senderId: 'driver',
-            senderName: activeRide.driverName || 'Conductor',
-            message: '¡Entendido! Muchas gracias por el aviso.',
-            createdAt: new Date().toISOString()
-          }
-        ]);
-      }, 2500);
-    }
+  const sendChatMessage = async (msg: string, sender: 'owner' | 'driver') => {
+    if (!activeRide || !userProfile) return;
+    await supabase.from('messages').insert({
+      ride_id: activeRide.id,
+      sender_id: sender,
+      sender_name: userProfile.fullName || 'Usuario',
+      message: msg
+    });
   };
 
-  const toggleDriverOnline = () => {
-    setDriverOnline(prev => !prev);
+  const toggleDriverOnline = async () => {
+    if (!user) return;
+    const nextState = !driverOnline;
+    setDriverOnline(nextState);
+    await supabase.from('profiles').update({ is_online: nextState }).eq('id', user.id);
   };
 
   const toggleDriverWhatsapp = () => {
@@ -576,19 +748,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setUseRealGPS(prev => !prev);
   };
 
-  const resetAll = () => {
-    setUserRole('none');
+  // Auth Operations
+  const signUpWithEmail = async (email: string, pass: string) => {
+    const { error } = await supabase.auth.signUp({ email, password: pass });
+    return { error };
+  };
+
+  const signInWithEmail = async (email: string, pass: string) => {
+    const { error } = await supabase.auth.signInWithPassword({ email, password: pass });
+    return { error };
+  };
+
+  const loginWithGoogle = async () => {
+    await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: window.location.origin
+      }
+    });
+  };
+
+  const resetAll = async () => {
+    if (geoWatcherRef.current !== null) {
+      navigator.geolocation.clearWatch(geoWatcherRef.current);
+    }
+    await supabase.auth.signOut();
     setUserProfile(null);
-    setPets(DEFAULT_PETS);
+    setUserRole('none');
+    setPets([]);
     setRides([]);
     setActiveRide(null);
     setChatMessages([]);
     setDriverOnline(false);
-    setDriverEarnings(0);
-    setDriverRidesCompleted(0);
-    setDriverWhatsapp(true);
-    setUseRealGPS(false);
-    localStorage.clear();
   };
 
   return (
@@ -605,6 +796,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       driverRidesCompleted,
       driverWhatsapp,
       useRealGPS,
+      session,
+      user,
+      loading,
+      
       selectRole,
       registerUser,
       addPet,
@@ -618,6 +813,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       toggleDriverOnline,
       toggleDriverWhatsapp,
       toggleUseRealGPS,
+      signUpWithEmail,
+      signInWithEmail,
+      loginWithGoogle,
       resetAll
     }}>
       {children}

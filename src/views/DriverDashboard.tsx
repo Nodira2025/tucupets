@@ -79,11 +79,11 @@ export const DriverDashboard: React.FC = () => {
     advanceRideStatus();
   };
 
-  const handlePinSubmit = (e: React.FormEvent) => {
+  const handlePinSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeRide) return;
     
-    const isValid = verifyRidePin(pinInput);
+    const isValid = await verifyRidePin(pinInput);
     if (isValid) {
       setPinInput('');
       setPinError(false);

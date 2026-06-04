@@ -1,42 +1,93 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { Shield, Sparkles, User, Phone, Car } from 'lucide-react';
+import { Shield, Sparkles, User, Phone, Car, Mail, Lock } from 'lucide-react';
 
 const AVATARS = ['🐶', '🐱', '🦜', '🦁', '🦊', '🧑‍💻', '👩‍⚕️', '🚗'];
 
 export const WelcomeScreen: React.FC = () => {
-  const { registerUser, userProfile, selectRole, resetAll } = useApp();
+  const { 
+    registerUser, 
+    userProfile, 
+    selectRole, 
+    resetAll, 
+    user, 
+    loading,
+    signUpWithEmail,
+    signInWithEmail,
+    loginWithGoogle
+  } = useApp();
 
-  // Form states
+  // Auth panel states
+  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [authMessage, setAuthMessage] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
+
+  // Onboarding form states (shown if logged in but role is 'none')
   const [fullName, setFullName] = useState(userProfile?.fullName || '');
-  const [phone, setPhone] = useState(userProfile?.phone || '+54 9 381 123-4567');
+  const [phone, setPhone] = useState(userProfile?.phone || '+54 9 381 ');
   const [avatar, setAvatar] = useState(userProfile?.avatar || '🐶');
   const [role, setRole] = useState<'owner' | 'driver'>('owner');
-  const [vehicleInfo, setVehicleInfo] = useState(userProfile?.vehicleInfo || 'Kangoo Blanca Habilitada');
-  const [isNewUser, setIsNewUser] = useState(!userProfile);
+  const [vehicleInfo, setVehicleInfo] = useState(userProfile?.vehicleInfo || 'Renault Kangoo');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    setAuthMessage('');
+    setAuthLoading(true);
+
+    try {
+      if (authMode === 'signup') {
+        const { error } = await signUpWithEmail(email, password);
+        if (error) {
+          setAuthError(error.message);
+        } else {
+          setAuthMessage('¡Registro exitoso! Por favor revisá tu casilla de correo para confirmar tu email o ingresá.');
+        }
+      } else {
+        const { error } = await signInWithEmail(email, password);
+        if (error) {
+          setAuthError(error.message);
+        }
+      }
+    } catch (err: any) {
+      setAuthError(err.message || 'Error al autenticar');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleOnboardingSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!fullName.trim() || !phone.trim()) return;
 
-    registerUser({
+    setAuthLoading(true);
+    await registerUser({
       fullName,
       phone,
       role,
       avatar,
       vehicleInfo: role === 'driver' ? vehicleInfo : undefined
     });
+    setAuthLoading(false);
   };
 
-  const handleQuickDemo = (demoRole: 'owner' | 'driver') => {
-    registerUser({
-      fullName: demoRole === 'owner' ? 'Franco Pasajero' : 'Marcos Chofer',
-      phone: demoRole === 'owner' ? '+54 9 381 555-1111' : '+54 9 381 555-9999',
-      role: demoRole,
-      avatar: demoRole === 'owner' ? '🐶' : '🚗',
-      vehicleInfo: demoRole === 'driver' ? 'Pet-Van Fiorino Habilitada' : undefined
-    });
-  };
+  // Render Loader if authentication profile is verifying
+  if (loading) {
+    return (
+      <div className="welcome-container animate-fade-in" style={{ justifyContent: 'center' }}>
+        <div className="radar-circle-mini">
+          <div className="radar-ring-mini"></div>
+          <span style={{ fontSize: '24px' }}>🐾</span>
+        </div>
+        <p style={{ marginTop: '14px', color: 'var(--neutral-grey)', fontSize: '14px', fontWeight: '600' }}>
+          Cargando perfiles seguros...
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="welcome-container animate-fade-in">
@@ -50,15 +101,105 @@ export const WelcomeScreen: React.FC = () => {
         <span className="tucuman-tag">📍 San Miguel de Tucumán</span>
       </div>
 
-      {isNewUser ? (
-        /* Registration / Profile Form Card */
+      {!user ? (
+        /* ================= PHASE 1: LOGIN / SIGNUP SCREEN ================= */
         <div className="registration-card glass animate-slide-up">
-          <h2 style={{ fontSize: '18px', marginBottom: '14px', textAlign: 'center' }}>Crear Perfil Local 👤</h2>
-          
-          <form onSubmit={handleSubmit}>
-            {/* Avatar Select Row */}
+          <div className="auth-toggle-row">
+            <button 
+              className={`auth-toggle-btn ${authMode === 'signin' ? 'active' : ''}`}
+              onClick={() => { setAuthMode('signin'); setAuthError(''); }}
+            >
+              Iniciar Sesión
+            </button>
+            <button 
+              className={`auth-toggle-btn ${authMode === 'signup' ? 'active' : ''}`}
+              onClick={() => { setAuthMode('signup'); setAuthError(''); }}
+            >
+              Registrarse
+            </button>
+          </div>
+
+          <form onSubmit={handleAuthSubmit} style={{ marginTop: '16px' }}>
+            {/* Email field */}
             <div className="input-group">
-              <label>Seleccioná tu Avatar</label>
+              <label>Correo Electrónico</label>
+              <div style={{ position: 'relative' }}>
+                <span className="input-icon-field"><Mail size={16} /></span>
+                <input 
+                  type="email" 
+                  className="input-field-icon"
+                  placeholder="nombre@correo.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                />
+              </div>
+            </div>
+
+            {/* Password field */}
+            <div className="input-group">
+              <label>Contraseña</label>
+              <div style={{ position: 'relative' }}>
+                <span className="input-icon-field"><Lock size={16} /></span>
+                <input 
+                  type="password" 
+                  className="input-field-icon"
+                  placeholder="Mínimo 6 caracteres"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
+              </div>
+            </div>
+
+            {authError && (
+              <div className="auth-alert error">
+                ⚠️ {authError}
+              </div>
+            )}
+
+            {authMessage && (
+              <div className="auth-alert success">
+                📧 {authMessage}
+              </div>
+            )}
+
+            <button 
+              type="submit" 
+              className="btn btn-primary" 
+              style={{ width: '100%', marginTop: '10px' }}
+              disabled={authLoading}
+            >
+              {authLoading ? 'Procesando...' : authMode === 'signin' ? 'Ingresar 🚀' : 'Crear Cuenta 🚀'}
+            </button>
+          </form>
+
+          {/* Social Sign-in option */}
+          <div className="quick-demo-divider" style={{ margin: '18px 0' }}>
+            <span>O continuar con</span>
+          </div>
+
+          <button 
+            type="button" 
+            className="google-signin-btn btn"
+            onClick={loginWithGoogle}
+            disabled={authLoading}
+          >
+            <span style={{ fontSize: '18px', marginRight: '6px' }}>🌐</span> Google OAuth
+          </button>
+        </div>
+      ) : userProfile && userProfile.role === 'none' ? (
+        /* ================= PHASE 2: ONBOARDING ROLE FORM ================= */
+        <div className="registration-card glass animate-slide-up">
+          <h2 style={{ fontSize: '18px', marginBottom: '10px', textAlign: 'center' }}>Completar tu Perfil 👤</h2>
+          <p style={{ fontSize: '12px', color: 'var(--neutral-grey)', textAlign: 'center', marginBottom: '16px' }}>
+            Vinculado con el correo: <strong>{user.email}</strong>
+          </p>
+
+          <form onSubmit={handleOnboardingSubmit}>
+            {/* Avatar Row */}
+            <div className="input-group">
+              <label>Elegí tu Avatar</label>
               <div className="avatar-grid">
                 {AVATARS.map((av) => (
                   <button 
@@ -73,7 +214,7 @@ export const WelcomeScreen: React.FC = () => {
               </div>
             </div>
 
-            {/* Name Input */}
+            {/* Full Name field */}
             <div className="input-group">
               <label>Nombre y Apellido</label>
               <div style={{ position: 'relative' }}>
@@ -81,7 +222,7 @@ export const WelcomeScreen: React.FC = () => {
                 <input 
                   type="text" 
                   className="input-field-icon"
-                  placeholder="Ej: Franco Martínez"
+                  placeholder="Ej: Franco Tucu"
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
                   required
@@ -89,15 +230,15 @@ export const WelcomeScreen: React.FC = () => {
               </div>
             </div>
 
-            {/* Phone Input */}
+            {/* Phone field */}
             <div className="input-group">
-              <label>Teléfono Celular</label>
+              <label>Número de WhatsApp (Celular)</label>
               <div style={{ position: 'relative' }}>
                 <span className="input-icon-field"><Phone size={16} /></span>
                 <input 
                   type="tel" 
                   className="input-field-icon"
-                  placeholder="Ej: +54 9 381 123-4567"
+                  placeholder="Ej: +54 9 381 555-1234"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
                   required
@@ -105,37 +246,37 @@ export const WelcomeScreen: React.FC = () => {
               </div>
             </div>
 
-            {/* Role Select Buttons */}
+            {/* Role Switch */}
             <div className="input-group">
-              <label>¿Cómo querés ingresar?</label>
+              <label>¿Cómo vas a usar TucuPets?</label>
               <div className="role-selector-row">
                 <button 
                   type="button"
                   className={`role-btn-choice ${role === 'owner' ? 'active-owner' : ''}`}
                   onClick={() => setRole('owner')}
                 >
-                  🐕 Dueño (Pedir Viajes)
+                  🐕 Dueño de Mascota
                 </button>
                 <button 
                   type="button"
                   className={`role-btn-choice ${role === 'driver' ? 'active-driver' : ''}`}
                   onClick={() => setRole('driver')}
                 >
-                  🚐 Chofer (Transportar)
+                  🚐 Chofer / Conductor
                 </button>
               </div>
             </div>
 
-            {/* Driver Additional Fields */}
+            {/* Driver specifications */}
             {role === 'driver' && (
               <div className="input-group animate-fade-in">
-                <label>Detalles del Vehículo (Habilitado)</label>
+                <label>Detalles del Vehículo Habilitado</label>
                 <div style={{ position: 'relative' }}>
                   <span className="input-icon-field"><Car size={16} /></span>
                   <input 
                     type="text" 
                     className="input-field-icon"
-                    placeholder="Ej: Partner Gris Habilitada Mascotas"
+                    placeholder="Ej: Fiorino Blanca (Habilitado)"
                     value={vehicleInfo}
                     onChange={(e) => setVehicleInfo(e.target.value)}
                     required
@@ -144,35 +285,31 @@ export const WelcomeScreen: React.FC = () => {
               </div>
             )}
 
-            <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '16px' }}>
-              Registrarse y Entrar 🚀
+            <button 
+              type="submit" 
+              className="btn btn-primary" 
+              style={{ width: '100%', marginTop: '16px' }}
+              disabled={authLoading}
+            >
+              {authLoading ? 'Guardando...' : 'Comenzar a usar la app 🚀'}
             </button>
           </form>
 
-          {/* Quick Demo Bypass */}
-          <div className="quick-demo-divider">
-            <span>O entrar rápido para pruebas</span>
-          </div>
-
-          <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
-            <button className="btn btn-secondary" style={{ flex: 1, padding: '10px 4px', fontSize: '12px' }} onClick={() => handleQuickDemo('owner')}>
-              🔑 Demo Cliente
-            </button>
-            <button className="btn btn-secondary" style={{ flex: 1, padding: '10px 4px', fontSize: '12px' }} onClick={() => handleQuickDemo('driver')}>
-              🔑 Demo Chofer
-            </button>
-          </div>
+          <button className="reset-btn-link" onClick={resetAll} style={{ width: '100%', marginTop: '14px', textAlign: 'center' }}>
+            Cancelar / Cerrar Sesión
+          </button>
         </div>
       ) : (
-        /* Returning User role selector */
+        /* ================= PHASE 3: RETURNING LOGGED USER CARD ================= */
         <div className="cards-section animate-slide-up">
           <div className="profile-greeting glass">
             <span style={{ fontSize: '32px' }}>{userProfile?.avatar}</span>
-            <div style={{ textAlign: 'left' }}>
-              <div style={{ fontSize: '12px', color: 'var(--neutral-grey)' }}>Bienvenido de nuevo,</div>
-              <div style={{ fontSize: '18px', fontWeight: '700' }}>{userProfile?.fullName}</div>
+            <div style={{ textAlign: 'left', flex: 1 }}>
+              <div style={{ fontSize: '11px', color: 'var(--neutral-grey)' }}>Sesión activa como:</div>
+              <div style={{ fontSize: '16px', fontWeight: '700', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{userProfile?.fullName}</div>
+              <div style={{ fontSize: '10px', color: 'var(--neutral-grey)', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{user.email}</div>
             </div>
-            <button className="change-user-btn" onClick={() => setIsNewUser(true)}>Cambiar</button>
+            <button className="change-user-btn" onClick={resetAll} style={{ color: 'var(--danger)' }}>Salir</button>
           </div>
 
           <button 
@@ -183,9 +320,9 @@ export const WelcomeScreen: React.FC = () => {
               <span>🐕</span>
             </div>
             <div style={{ textAlign: 'left' }}>
-              <h3 style={{ fontSize: '18px', fontWeight: '700' }}>Modo Dueño</h3>
+              <h3 style={{ fontSize: '18px', fontWeight: '700' }}>Modo Pasajero / Dueño</h3>
               <p style={{ fontSize: '13px', color: 'var(--neutral-grey)', marginTop: '4px' }}>
-                Quiero transportar a mi mascota con amor en Tucumán.
+                Quiero pedir viajes para mis mascotas en Tucumán.
               </p>
             </div>
             <div className="arrow-indicator">➔</div>
@@ -199,16 +336,12 @@ export const WelcomeScreen: React.FC = () => {
               <span>🚐</span>
             </div>
             <div style={{ textAlign: 'left' }}>
-              <h3 style={{ fontSize: '18px', fontWeight: '700' }}>Modo Conductor</h3>
+              <h3 style={{ fontSize: '18px', fontWeight: '700' }}>Modo Conductor / Chofer</h3>
               <p style={{ fontSize: '13px', color: 'var(--neutral-grey)', marginTop: '4px' }}>
-                Quiero ganar dinero transportando mascotas con mi vehículo.
+                Quiero ponerme en línea y realizar viajes en la ciudad.
               </p>
             </div>
             <div className="arrow-indicator">➔</div>
-          </button>
-
-          <button className="reset-btn-link" onClick={resetAll} style={{ marginTop: '20px' }}>
-            Limpiar Datos de Simulación
           </button>
         </div>
       )}
@@ -221,7 +354,7 @@ export const WelcomeScreen: React.FC = () => {
         </div>
         <div className="trust-item">
           <Sparkles size={14} style={{ color: 'var(--primary-dark)' }} />
-          <span>Tucumán Habilitado</span>
+          <span>Base de Datos Segura</span>
         </div>
       </div>
 
@@ -231,33 +364,33 @@ export const WelcomeScreen: React.FC = () => {
           flex-direction: column;
           align-items: center;
           height: 100%;
-          padding: 24px 20px;
+          padding: 20px;
           background: linear-gradient(180deg, #fff7ed 0%, #fff 60%);
           overflow-y: auto;
         }
         .logo-section {
           margin-top: 10px;
-          margin-bottom: 20px;
+          margin-bottom: 16px;
           text-align: center;
         }
         .brand-badge {
-          width: 64px;
-          height: 64px;
+          width: 60px;
+          height: 60px;
           background-color: var(--primary);
-          border-radius: 20px;
+          border-radius: 18px;
           display: flex;
           align-items: center;
           justify-content: center;
-          font-size: 36px;
+          font-size: 34px;
           margin: 0 auto;
           box-shadow: var(--shadow-md);
           animation: bounce 3s infinite;
         }
         .brand-title {
-          font-size: 28px;
+          font-size: 26px;
           font-weight: 700;
           color: var(--neutral-dark);
-          margin-top: 10px;
+          margin-top: 8px;
           letter-spacing: 0.5px;
         }
         .brand-subtitle {
@@ -283,8 +416,65 @@ export const WelcomeScreen: React.FC = () => {
           background: white;
           border-radius: var(--radius-md);
           border: 1px solid var(--border);
-          padding: 20px;
+          padding: 16px;
           box-shadow: var(--shadow-md);
+        }
+        .auth-toggle-row {
+          display: flex;
+          background-color: #f1f5f9;
+          border-radius: 10px;
+          padding: 3px;
+        }
+        .auth-toggle-btn {
+          flex: 1;
+          background: none;
+          border: none;
+          padding: 10px;
+          font-size: 13px;
+          font-weight: 600;
+          color: var(--neutral-grey);
+          cursor: pointer;
+          border-radius: 8px;
+          transition: all 0.2s ease;
+        }
+        .auth-toggle-btn.active {
+          background-color: white;
+          color: var(--neutral-dark);
+          box-shadow: var(--shadow-sm);
+        }
+        .auth-alert {
+          padding: 10px 12px;
+          border-radius: 8px;
+          font-size: 12px;
+          font-weight: 500;
+          margin-top: 10px;
+          text-align: left;
+        }
+        .auth-alert.error {
+          background-color: var(--danger-light);
+          color: var(--danger);
+          border: 1px solid #fecaca;
+        }
+        .auth-alert.success {
+          background-color: var(--success-light);
+          color: var(--success);
+          border: 1px solid #bbf7d0;
+        }
+        .google-signin-btn {
+          width: 100%;
+          background-color: white;
+          border: 1px solid var(--border);
+          color: var(--neutral-dark);
+          padding: 12px;
+          border-radius: var(--radius-md);
+          font-weight: 600;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .google-signin-btn:hover {
+          background-color: #f8fafc;
         }
         .avatar-grid {
           display: grid;
@@ -293,11 +483,11 @@ export const WelcomeScreen: React.FC = () => {
           margin-top: 4px;
         }
         .avatar-btn {
-          height: 44px;
+          height: 40px;
           background-color: #f1f5f9;
           border: 1px solid var(--border);
           border-radius: 8px;
-          font-size: 22px;
+          font-size: 20px;
           cursor: pointer;
           transition: all 0.2s ease;
         }
@@ -307,7 +497,6 @@ export const WelcomeScreen: React.FC = () => {
         .avatar-btn.selected {
           border-color: var(--primary);
           background-color: var(--primary-light);
-          box-shadow: 0 2px 6px rgba(247, 185, 87, 0.2);
         }
         .input-icon-field {
           position: absolute;
@@ -348,7 +537,6 @@ export const WelcomeScreen: React.FC = () => {
           display: flex;
           align-items: center;
           text-align: center;
-          margin-top: 14px;
           color: var(--neutral-grey);
           font-size: 10px;
         }
