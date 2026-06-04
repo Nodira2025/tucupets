@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
-import { Shield, Sparkles, User, Phone, Car, Mail, Lock } from 'lucide-react';
+import { Shield, Sparkles, User, Phone, Car, Mail, Lock, Eye, EyeOff } from 'lucide-react';
 
 const AVATARS = ['🐶', '🐱', '🦜', '🦁', '🦊', '🧑‍💻', '👩‍⚕️', '🚗'];
 
@@ -24,6 +24,8 @@ export const WelcomeScreen: React.FC = () => {
   const [authError, setAuthError] = useState('');
   const [authMessage, setAuthMessage] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(false);
 
   // Onboarding form states (shown if logged in but role is 'none')
   const [fullName, setFullName] = useState(userProfile?.fullName || '');
@@ -31,6 +33,18 @@ export const WelcomeScreen: React.FC = () => {
   const [avatar, setAvatar] = useState(userProfile?.avatar || '🐶');
   const [role, setRole] = useState<'owner' | 'driver'>('owner');
   const [vehicleInfo, setVehicleInfo] = useState(userProfile?.vehicleInfo || 'Renault Kangoo');
+
+  // Load saved credentials on mount
+  useEffect(() => {
+    const savedEmail = localStorage.getItem('tucupets_remember_email');
+    const savedPassword = localStorage.getItem('tucupets_remember_password');
+    const savedRemember = localStorage.getItem('tucupets_remember_me') === 'true';
+    if (savedRemember) {
+      if (savedEmail) setEmail(savedEmail);
+      if (savedPassword) setPassword(savedPassword);
+      setRememberMe(true);
+    }
+  }, []);
 
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -44,12 +58,29 @@ export const WelcomeScreen: React.FC = () => {
         if (error) {
           setAuthError(error.message);
         } else {
+          // If remember is checked, save email & password to local storage
+          if (rememberMe) {
+            localStorage.setItem('tucupets_remember_email', email);
+            localStorage.setItem('tucupets_remember_password', password);
+            localStorage.setItem('tucupets_remember_me', 'true');
+          }
           setAuthMessage('¡Registro exitoso! Por favor revisá tu casilla de correo para confirmar tu email o ingresá.');
         }
       } else {
         const { error } = await signInWithEmail(email, password);
         if (error) {
           setAuthError(error.message);
+        } else {
+          // Save or clear credentials on successful sign-in
+          if (rememberMe) {
+            localStorage.setItem('tucupets_remember_email', email);
+            localStorage.setItem('tucupets_remember_password', password);
+            localStorage.setItem('tucupets_remember_me', 'true');
+          } else {
+            localStorage.removeItem('tucupets_remember_email');
+            localStorage.removeItem('tucupets_remember_password');
+            localStorage.removeItem('tucupets_remember_me');
+          }
         }
       }
     } catch (err: any) {
@@ -142,14 +173,36 @@ export const WelcomeScreen: React.FC = () => {
               <div style={{ position: 'relative' }}>
                 <span className="input-icon-field"><Lock size={16} /></span>
                 <input 
-                  type="password" 
+                  type={showPassword ? 'text' : 'password'} 
                   className="input-field-icon"
+                  style={{ paddingRight: '46px' }}
                   placeholder="Mínimo 6 caracteres"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
                 />
+                <button
+                  type="button"
+                  className="password-toggle-btn"
+                  onClick={() => setShowPassword(!showPassword)}
+                  tabIndex={-1}
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
               </div>
+            </div>
+
+            {/* Remember Me Checkbox */}
+            <div className="remember-me-row">
+              <label className="remember-me-label">
+                <input 
+                  type="checkbox" 
+                  className="remember-me-checkbox"
+                  checked={rememberMe}
+                  onChange={(e) => setRememberMe(e.target.checked)}
+                />
+                <span className="remember-me-text">Recordar contraseña</span>
+              </label>
             </div>
 
             {authError && (
@@ -167,7 +220,7 @@ export const WelcomeScreen: React.FC = () => {
             <button 
               type="submit" 
               className="btn btn-primary" 
-              style={{ width: '100%', marginTop: '10px' }}
+              style={{ width: '100%', marginTop: '6px' }}
               disabled={authLoading}
             >
               {authLoading ? 'Procesando...' : authMode === 'signin' ? 'Ingresar 🚀' : 'Crear Cuenta 🚀'}
@@ -365,138 +418,238 @@ export const WelcomeScreen: React.FC = () => {
           align-items: center;
           height: 100%;
           padding: 20px;
-          background: linear-gradient(180deg, #fff7ed 0%, #fff 60%);
+          background: linear-gradient(180deg, #fffcf6 0%, #fff 70%);
           overflow-y: auto;
+          position: relative;
+        }
+        .welcome-container::before {
+          content: '';
+          position: absolute;
+          top: -100px;
+          right: -100px;
+          width: 250px;
+          height: 250px;
+          border-radius: 50%;
+          background: radial-gradient(circle, rgba(247, 185, 87, 0.15) 0%, rgba(255, 255, 255, 0) 70%);
+          z-index: 0;
+          pointer-events: none;
         }
         .logo-section {
-          margin-top: 10px;
-          margin-bottom: 16px;
+          margin-top: 15px;
+          margin-bottom: 20px;
           text-align: center;
+          z-index: 1;
         }
         .brand-badge {
-          width: 60px;
-          height: 60px;
-          background-color: var(--primary);
-          border-radius: 18px;
+          width: 68px;
+          height: 68px;
+          background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+          border-radius: 20px;
           display: flex;
           align-items: center;
           justify-content: center;
-          font-size: 34px;
+          font-size: 36px;
           margin: 0 auto;
-          box-shadow: var(--shadow-md);
+          box-shadow: 0 8px 20px rgba(247, 185, 87, 0.4);
           animation: bounce 3s infinite;
         }
         .brand-title {
-          font-size: 26px;
-          font-weight: 700;
+          font-size: 28px;
+          font-weight: 800;
           color: var(--neutral-dark);
-          margin-top: 8px;
+          margin-top: 10px;
           letter-spacing: 0.5px;
         }
         .brand-subtitle {
           font-size: 13px;
           color: var(--neutral-grey);
-          margin-top: 4px;
-          padding: 0 10px;
-          line-height: 1.4;
+          margin-top: 6px;
+          padding: 0 12px;
+          line-height: 1.45;
+          font-weight: 500;
         }
         .tucuman-tag {
           display: inline-block;
           background-color: var(--primary-light);
           color: var(--primary-dark);
           font-size: 11px;
-          font-weight: 700;
-          padding: 3px 10px;
-          border-radius: 12px;
-          margin-top: 6px;
-          border: 1px solid rgba(247, 185, 87, 0.2);
+          font-weight: 800;
+          padding: 4px 12px;
+          border-radius: 20px;
+          margin-top: 8px;
+          border: 1px solid rgba(247, 185, 87, 0.25);
+          box-shadow: 0 2px 4px rgba(247, 185, 87, 0.05);
         }
         .registration-card {
           width: 100%;
-          background: white;
-          border-radius: var(--radius-md);
-          border: 1px solid var(--border);
-          padding: 16px;
-          box-shadow: var(--shadow-md);
+          background: rgba(255, 255, 255, 0.9);
+          backdrop-filter: blur(20px);
+          -webkit-backdrop-filter: blur(20px);
+          border-radius: 24px;
+          border: 1px solid rgba(255, 255, 255, 0.6);
+          padding: 24px;
+          box-shadow: 0 20px 40px rgba(220, 180, 140, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+          transition: all 0.3s ease;
+          z-index: 1;
         }
         .auth-toggle-row {
           display: flex;
-          background-color: #f1f5f9;
-          border-radius: 10px;
-          padding: 3px;
+          background-color: rgba(241, 245, 249, 0.8);
+          border-radius: 14px;
+          padding: 4px;
+          border: 1px solid rgba(226, 232, 240, 0.8);
+          margin-bottom: 8px;
         }
         .auth-toggle-btn {
           flex: 1;
           background: none;
           border: none;
-          padding: 10px;
-          font-size: 13px;
-          font-weight: 600;
+          padding: 12px;
+          font-size: 14px;
+          font-weight: 700;
           color: var(--neutral-grey);
           cursor: pointer;
-          border-radius: 8px;
-          transition: all 0.2s ease;
+          border-radius: 10px;
+          transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
         }
         .auth-toggle-btn.active {
           background-color: white;
           color: var(--neutral-dark);
-          box-shadow: var(--shadow-sm);
+          box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05);
         }
-        .auth-alert {
-          padding: 10px 12px;
-          border-radius: 8px;
-          font-size: 12px;
-          font-weight: 500;
-          margin-top: 10px;
-          text-align: left;
-        }
-        .auth-alert.error {
-          background-color: var(--danger-light);
-          color: var(--danger);
-          border: 1px solid #fecaca;
-        }
-        .auth-alert.success {
-          background-color: var(--success-light);
-          color: var(--success);
-          border: 1px solid #bbf7d0;
-        }
-        .google-signin-btn {
+        .input-field-icon {
           width: 100%;
-          background-color: white;
-          border: 1px solid var(--border);
+          padding: 14px 18px;
+          padding-left: 42px;
+          border-radius: 14px;
+          border: 1px solid rgba(226, 232, 240, 0.8);
+          background: rgba(255, 255, 255, 0.9);
           color: var(--neutral-dark);
-          padding: 12px;
-          border-radius: var(--radius-md);
-          font-weight: 600;
+          transition: all 0.25s ease;
+          font-size: 14px;
+          font-weight: 500;
+        }
+        .input-field-icon:focus {
+          border-color: var(--primary);
+          background: white;
+          box-shadow: 0 0 0 4px rgba(247, 185, 87, 0.15);
+        }
+        .password-toggle-btn {
+          position: absolute;
+          right: 12px;
+          top: 50%;
+          transform: translateY(-50%);
+          background: none;
+          border: none;
+          color: var(--neutral-grey);
           cursor: pointer;
           display: flex;
           align-items: center;
           justify-content: center;
+          padding: 6px;
+          border-radius: 50%;
+          transition: all 0.2s ease;
+        }
+        .password-toggle-btn:hover {
+          color: var(--neutral-dark);
+          background-color: rgba(0, 0, 0, 0.05);
+        }
+        .remember-me-row {
+          display: flex;
+          align-items: center;
+          margin-top: 2px;
+          margin-bottom: 18px;
+          padding-left: 2px;
+        }
+        .remember-me-label {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          cursor: pointer;
+          user-select: none;
+        }
+        .remember-me-checkbox {
+          width: 17px;
+          height: 17px;
+          border-radius: 5px;
+          border: 1px solid rgba(226, 232, 240, 1);
+          accent-color: var(--primary);
+          cursor: pointer;
+        }
+        .remember-me-text {
+          font-size: 13px;
+          font-weight: 600;
+          color: var(--neutral-grey);
+          transition: color 0.2s ease;
+        }
+        .remember-me-label:hover .remember-me-text {
+          color: var(--neutral-dark);
+        }
+        .auth-alert {
+          padding: 12px 14px;
+          border-radius: 12px;
+          font-size: 13px;
+          font-weight: 600;
+          margin-top: 12px;
+          text-align: left;
+          animation: fade-in 0.2s ease;
+        }
+        .auth-alert.error {
+          background-color: var(--danger-light);
+          color: var(--danger);
+          border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+        .auth-alert.success {
+          background-color: var(--success-light);
+          color: var(--success);
+          border: 1px solid rgba(34, 197, 94, 0.2);
+        }
+        .google-signin-btn {
+          width: 100%;
+          background-color: white;
+          border: 1px solid rgba(226, 232, 240, 0.8);
+          color: var(--neutral-dark);
+          padding: 14px;
+          border-radius: 14px;
+          font-weight: 700;
+          font-size: 14px;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+          transition: all 0.2s ease;
         }
         .google-signin-btn:hover {
           background-color: #f8fafc;
+          border-color: rgba(203, 213, 225, 0.8);
+          transform: translateY(-1px);
+          box-shadow: 0 4px 8px rgba(0,0,0,0.04);
         }
         .avatar-grid {
           display: grid;
           grid-template-columns: repeat(4, 1fr);
-          gap: 6px;
-          margin-top: 4px;
+          gap: 8px;
+          margin-top: 6px;
         }
         .avatar-btn {
-          height: 40px;
-          background-color: #f1f5f9;
-          border: 1px solid var(--border);
-          border-radius: 8px;
-          font-size: 20px;
+          height: 44px;
+          background-color: #f8fafc;
+          border: 1px solid rgba(226, 232, 240, 0.8);
+          border-radius: 10px;
+          font-size: 22px;
           cursor: pointer;
           transition: all 0.2s ease;
         }
         .avatar-btn:hover {
           background-color: var(--primary-light);
+          border-color: rgba(247, 185, 87, 0.4);
         }
         .avatar-btn.selected {
           border-color: var(--primary);
           background-color: var(--primary-light);
+          box-shadow: 0 0 0 2px rgba(247, 185, 87, 0.2);
         }
         .input-icon-field {
           position: absolute;
@@ -509,15 +662,15 @@ export const WelcomeScreen: React.FC = () => {
         }
         .role-selector-row {
           display: flex;
-          gap: 8px;
+          gap: 10px;
         }
         .role-btn-choice {
           flex: 1;
-          padding: 10px 4px;
+          padding: 12px 6px;
           border: 1px solid var(--border);
           border-radius: var(--radius-md);
           background-color: white;
-          font-size: 11px;
+          font-size: 12px;
           font-weight: 700;
           color: var(--neutral-grey);
           cursor: pointer;
@@ -527,40 +680,44 @@ export const WelcomeScreen: React.FC = () => {
           background-color: var(--primary-light);
           border-color: var(--primary);
           color: var(--primary-dark);
+          box-shadow: 0 4px 10px rgba(247, 185, 87, 0.15);
         }
         .role-btn-choice.active-driver {
           background-color: var(--secondary-light);
           border-color: var(--secondary);
           color: var(--secondary);
+          box-shadow: 0 4px 10px rgba(99, 102, 241, 0.15);
         }
         .quick-demo-divider {
           display: flex;
           align-items: center;
           text-align: center;
           color: var(--neutral-grey);
-          font-size: 10px;
+          font-size: 11px;
+          font-weight: 600;
         }
         .quick-demo-divider::before, .quick-demo-divider::after {
           content: '';
           flex: 1;
-          border-bottom: 1px solid var(--border);
+          border-bottom: 1px solid rgba(226, 232, 240, 0.8);
         }
         .quick-demo-divider:not(:empty)::before {
-          margin-right: .5em;
+          margin-right: .8em;
         }
         .quick-demo-divider:not(:empty)::after {
-          margin-left: .5em;
+          margin-left: .8em;
         }
         .profile-greeting {
           display: flex;
           align-items: center;
           gap: 14px;
-          padding: 12px 16px;
+          padding: 14px 18px;
           background-color: white;
           border: 1px solid var(--border);
           border-radius: var(--radius-md);
           width: 100%;
           margin-bottom: 16px;
+          box-shadow: var(--shadow-sm);
         }
         .change-user-btn {
           margin-left: auto;
@@ -568,21 +725,22 @@ export const WelcomeScreen: React.FC = () => {
           border: none;
           color: var(--primary-dark);
           font-weight: 700;
-          font-size: 12px;
+          font-size: 13px;
           text-decoration: underline;
           cursor: pointer;
         }
         .cards-section {
           display: flex;
           flex-direction: column;
-          gap: 14px;
+          gap: 16px;
           width: 100%;
+          z-index: 1;
         }
         .role-card {
           display: flex;
           align-items: center;
           gap: 16px;
-          padding: 16px;
+          padding: 20px 18px;
           border-radius: var(--radius-md);
           background-color: white;
           border: 1px solid var(--border);
@@ -598,14 +756,14 @@ export const WelcomeScreen: React.FC = () => {
           border-color: var(--primary);
         }
         .role-card-icon {
-          width: 44px;
-          height: 44px;
-          border-radius: 12px;
+          width: 48px;
+          height: 48px;
+          border-radius: 14px;
           display: flex;
           align-items: center;
           justify-content: center;
           flex-shrink: 0;
-          font-size: 24px;
+          font-size: 26px;
         }
         .owner-bg {
           background-color: var(--primary-light);
@@ -615,18 +773,19 @@ export const WelcomeScreen: React.FC = () => {
         }
         .arrow-indicator {
           position: absolute;
-          right: 16px;
+          right: 18px;
           color: var(--neutral-grey);
-          font-size: 16px;
+          font-size: 18px;
         }
         .trust-footer {
           display: flex;
           justify-content: center;
-          gap: 14px;
+          gap: 16px;
           width: 100%;
-          font-size: 11px;
+          font-size: 12px;
           color: var(--neutral-grey);
-          font-weight: 500;
+          font-weight: 600;
+          z-index: 1;
         }
         .trust-item {
           display: flex;
@@ -638,7 +797,7 @@ export const WelcomeScreen: React.FC = () => {
           border: none;
           color: var(--neutral-grey);
           text-decoration: underline;
-          font-size: 11px;
+          font-size: 12px;
           cursor: pointer;
           opacity: 0.7;
         }
